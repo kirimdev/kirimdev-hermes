@@ -1,0 +1,105 @@
+name: kirimdev-platform
+label: Kirimdev
+kind: platform
+version: 1.0.0
+description: >
+  Kirimdev WhatsApp Cloud API gateway adapter for Hermes Agent.
+  Runs an aiohttp webhook server that receives Kirimdev webhook
+  deliveries (X-Kirim-Signature verification, Meta pass-through payload)
+  and replies through the Kirimdev Public API (/v1). Only WhatsApp
+  business phone numbers listed in KIRIMDEV_ENABLED_NUMBERS are
+  agent-operated; other connected numbers keep working in the dashboard.
+author: kirimdev
+homepage: https://github.com/kirimdev/kirimdev-hermes
+
+requires_env:
+  - name: KIRIMDEV_API_KEY
+    description: >
+      Kirimdev public API key (Dashboard > Settings > API Keys).
+      Starts with kdv_live_ or kdv_test_.
+    prompt: Kirimdev API key
+    url: https://app.kirimdev.com/settings/api-keys
+    password: true
+  - name: KIRIMDEV_WEBHOOK_SECRETS
+    description: >
+      Webhook signing secret(s) from POST /v1/webhook_subscriptions
+      (whsec_...). Comma-separated during rotation. Set to INSECURE_NO_AUTH
+      for local testing only.
+    prompt: Kirimdev webhook secret(s)
+    password: true
+
+optional_env:
+  - name: KIRIMDEV_PORT
+    description: "Webhook listen port (default: 8646)"
+    prompt: Webhook port
+    password: false
+  - name: KIRIMDEV_HOST
+    description: "Webhook bind host (default: 0.0.0.0)"
+    prompt: Webhook host
+    password: false
+  - name: KIRIMDEV_PUBLIC_URL
+    description: >
+      Public HTTPS base URL where Kirimdev can reach the webhook
+      (e.g. https://hermes.example.com). Shown in hermes gateway status.
+    prompt: Public HTTPS base URL
+    password: false
+  - name: KIRIMDEV_ENABLED_NUMBERS
+    description: >
+      Comma-separated Meta business_phone_number_id values that Hermes
+      may operate on. Inbound webhooks for other connected numbers are
+      ignored (they still work in the Kirimdev dashboard).
+    prompt: Enabled phone_number_id list (comma-separated)
+    password: false
+  - name: KIRIMDEV_DEFAULT_PHONE_NUMBER_ID
+    description: >
+      Default Meta business_phone_number_id for cron / hermes send when
+      chat_id has no prefix. Required if using standalone send without
+      composite chat_id.
+    prompt: Default phone_number_id
+    password: false
+  - name: KIRIMDEV_ALLOWED_USERS
+    description: >
+      Comma-separated customer phone numbers (no plus) allowed to chat
+      with the agent. Empty means deny all unless KIRIMDEV_ALLOW_ALL_USERS=true.
+    prompt: Allowed customer phones (comma-separated)
+    password: false
+  - name: KIRIMDEV_OWNER_USERS
+    description: >
+      Comma-separated customer phones with owner privileges — broadcast
+      and grant tools. Owners are implicitly allowed.
+    prompt: Owner phone numbers (comma-separated)
+    password: false
+  - name: KIRIMDEV_ALLOW_ALL_USERS
+    description: >
+      Dev only — accept inbound from any customer on enabled numbers.
+    prompt: Allow all senders? (true/false)
+    password: false
+  - name: KIRIMDEV_HOME_CHANNEL
+    description: >
+      Default composite chat_id or customer phone for cron delivery
+      (phone_number_id:customer_phone or digits only with DEFAULT_PHONE_NUMBER_ID).
+    prompt: Home channel
+    password: false
+  - name: KIRIMDEV_RATE_LIMIT_PER_MIN
+    description: "Per-sender inbound message cap (default: 15)"
+    prompt: Per-sender rate limit
+    password: false
+  - name: KIRIMDEV_OWNER_FULL_AGENT
+    description: >
+      When true (default), owner-tier senders get the full Hermes agent
+      toolset (terminal, web, files, cron) plus kirimdev_* tools.
+      Set false to limit owners to kirimdev_* tools only.
+    prompt: Enable full agent for owners? (true/false)
+    password: false
+  - name: KIRIMDEV_API_BASE_URL
+    description: "Override API base URL (default: https://api.kirimdev.com/v1)"
+    prompt: API base URL
+    password: false
+  - name: KIRIMDEV_GRANTS_FILE
+    description: "Grants JSON path (default ~/.hermes/kirimdev_grants.json)"
+    prompt: Grants file path
+    password: false
+  - name: KIRIMDEV_PENDING_FILE
+    description: "Pending approvals JSON path (default ~/.hermes/kirimdev_pending.json)"
+    prompt: Pending file path
+    password: false

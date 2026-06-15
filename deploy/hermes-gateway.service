@@ -1,0 +1,33 @@
+# systemd user unit — Hermes Agent gateway (background 24/7)
+#
+# Install:
+#   which hermes    # catat path, update ExecStart di bawah
+#   mkdir -p ~/.config/systemd/user
+#   cp hermes-gateway.service ~/.config/systemd/user/
+#   nano ~/.config/systemd/user/hermes-gateway.service   # sesuaikan ExecStart
+#   loginctl enable-linger $USER
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now hermes-gateway
+#
+# Logs:
+#   tail -f ~/.hermes/gateway.log
+#   journalctl --user -u hermes-gateway -f
+#
+# Full guide: deploy/DEPLOY.md
+
+[Unit]
+Description=Hermes Agent Gateway
+After=network-online.target
+
+[Service]
+Type=simple
+# Ganti path ini dengan output `which hermes` di server kamu:
+ExecStart=%h/.local/bin/hermes gateway run
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:%h/.hermes/gateway.log
+StandardError=append:%h/.hermes/gateway.log
+
+[Install]
+WantedBy=default.target
