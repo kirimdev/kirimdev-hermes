@@ -1,7 +1,7 @@
 name: kirimdev-platform
 label: Kirimdev
 kind: platform
-version: 1.1.0
+version: 1.1.1
 description: >
   Kirimdev WhatsApp Cloud API gateway adapter for Hermes Agent.
   Runs an aiohttp webhook server that receives Kirimdev webhook
@@ -94,6 +94,10 @@ optional_env:
   - name: KIRIMDEV_API_BASE_URL
     description: "Override API base URL (default: https://api.kirimdev.com/v1)"
     prompt: API base URL
+    password: false
+  - name: KIRIMDEV_DEFAULT_CHANNEL
+    description: "Outbound channel (default: whatsapp). Only whatsapp is supported today."
+    prompt: Default channel
     password: false
   - name: KIRIMDEV_GRANTS_FILE
     description: "Grants JSON path (default ~/.hermes/kirimdev_grants.json)"

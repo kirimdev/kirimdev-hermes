@@ -18,6 +18,12 @@ Version numbers match `kirimdev-platform/plugin.yaml`.
 
 - Webhook subscription should include **`message.received`** and **`message.sent`** (see `deploy/DEPLOY.md`).
 
+## [1.1.1] — 2026-06-15
+
+### Changed
+
+- **Satu README lengkap** di root repo — env vars, deploy, authorization, troubleshooting. Hapus `kirimdev-platform/README.md` dan `docs/CONFIG.md`.
+
 ## [1.0.0] — 2026-06-15
 
 First public release.
@@ -39,5 +45,6 @@ First public release.
 
 - Typing indicator requires a Kirimdev API build that forwards typing on already-read inbound messages.
 
+[1.1.1]: https://github.com/kirimdev/kirimdev-hermes/releases/tag/v1.1.1
 [1.1.0]: https://github.com/kirimdev/kirimdev-hermes/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kirimdev/kirimdev-hermes/releases/tag/v1.0.0
