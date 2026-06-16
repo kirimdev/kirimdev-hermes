@@ -5,6 +5,19 @@ All notable changes to the Kirimdev Hermes platform plugin are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Version numbers match `kirimdev-platform/plugin.yaml`.
 
+## [1.1.0] — 2026-06-15
+
+### Added
+
+- **Customer button/list replies** — interactive and legacy button inbound messages are forwarded to the agent as text (owner approval buttons unchanged).
+- **Inbound images** — uses Kirimdev `kirim.media_url` enrichment when `media_status=ready`; caption forwarded when present.
+- **`message.sent` webhook** — records outbound `provider_id` for echo prevention; **human handoff** pauses the agent after dashboard or phone-app (`source: app`) sends (`KIRIMDEV_HUMAN_HANDOFF_SECONDS`, default 900).
+- **Voice inbound** — optional Whisper transcription via `KIRIMDEV_VOICE_TRANSCRIBE=true` + `OPENAI_API_KEY`.
+
+### Changed
+
+- Webhook subscription should include **`message.received`** and **`message.sent`** (see `deploy/DEPLOY.md`).
+
 ## [1.0.0] — 2026-06-15
 
 First public release.
@@ -26,4 +39,5 @@ First public release.
 
 - Typing indicator requires a Kirimdev API build that forwards typing on already-read inbound messages.
 
+[1.1.0]: https://github.com/kirimdev/kirimdev-hermes/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kirimdev/kirimdev-hermes/releases/tag/v1.0.0

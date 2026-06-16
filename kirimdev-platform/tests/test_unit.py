@@ -946,6 +946,121 @@ def test_default_channel_whatsapp_only(monkeypatch):
     assert a.default_channel == "whatsapp"
 
 
+def test_extract_kirim_media():
+    url, status = kc._extract_kirim_media(
+        {"kirim": {"media_url": "https://cdn/x.jpg", "media_status": "ready"}}
+    )
+    assert url == "https://cdn/x.jpg"
+    assert status == "ready"
+    assert kc._extract_kirim_media({}) == (None, None)
+
+
+def test_is_inbound_text_type():
+    assert kc._is_inbound_text_type("text") is True
+    assert kc._is_inbound_text_type("interactive") is True
+    assert kc._is_inbound_text_type("button") is True
+    assert kc._is_inbound_text_type("image") is False
+
+
+def test_human_handoff_active(env, monkeypatch):
+    a = _build_adapter(env)
+    monkeypatch.setenv("KIRIMDEV_HUMAN_HANDOFF_SECONDS", "60")
+    a.human_handoff_seconds = 60
+    chat = "999:628111"
+    assert a._is_human_handoff_active(chat) is False
+    a._set_human_handoff(chat)
+    assert a._is_human_handoff_active(chat) is True
+    base = time.monotonic()
+    monkeypatch.setattr(kc.time, "monotonic", lambda: base + 120)
+    assert a._is_human_handoff_active(chat) is False
+
+
+def test_prepare_inbound_interactive(env):
+    a = _build_adapter(env)
+
+    async def run():
+        return await a._prepare_inbound_agent_payload(
+            {"message_type": "interactive", "content": "Ya, pesan"}
+        )
+
+    text, media, notice = asyncio.run(run())
+    assert text == "Ya, pesan"
+    assert media is None
+    assert notice is None
+
+
+def test_prepare_inbound_image_ready(env):
+    a = _build_adapter(env)
+
+    async def run():
+        return await a._prepare_inbound_agent_payload(
+            {
+                "message_type": "image",
+                "content": "Bukti",
+                "kirim": {
+                    "media_url": "https://media/x.jpg",
+                    "media_status": "ready",
+                },
+            }
+        )
+
+    text, media, notice = asyncio.run(run())
+    assert text == "Bukti"
+    assert media == ["https://media/x.jpg"]
+    assert notice is None
+
+
+def test_handle_message_sent_records_provider_and_handoff(env, monkeypatch):
+    monkeypatch.setenv("KIRIMDEV_ENABLED_NUMBERS", "999")
+    a = _build_adapter(env)
+    a.human_handoff_seconds = 300
+    payload = {
+        "type": "message.sent",
+        "data": {
+            "session": "999",
+            "message": {
+                "provider_id": "wamid.agent_echo",
+                "source": "dashboard",
+                "to": "+628111",
+            },
+            "meta": {"phone_number_id": "999"},
+        },
+    }
+
+    async def run():
+        return await a._handle_message_sent(payload)
+
+    status, code = asyncio.run(run())
+    assert status == 200
+    assert code == "ok"
+    assert "wamid.agent_echo" in a._sent_message_ids
+    assert a._is_human_handoff_active("999:628111") is True
+
+
+def test_handle_message_sent_api_no_handoff(env, monkeypatch):
+    monkeypatch.setenv("KIRIMDEV_ENABLED_NUMBERS", "999")
+    a = _build_adapter(env)
+    payload = {
+        "type": "message.sent",
+        "data": {
+            "session": "999",
+            "message": {
+                "provider_id": "wamid.api_out",
+                "source": "api",
+                "to": "+628111",
+            },
+        },
+    }
+
+    async def run():
+        return await a._handle_message_sent(payload)
+
+    status, code = asyncio.run(run())
+    assert status == 200
+    assert "wamid.api_out" in a._sent_message_ids
+    assert a._is_human_handoff_active("999:628111") is False
+
+
 # --------------------------------------------------------------------------
 # _record_sent_id caps to LRU size
 # --------------------------------------------------------------------------

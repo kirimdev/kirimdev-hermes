@@ -16,8 +16,10 @@ per business line gets an isolated Hermes session.
 
 **Loop prevention.** Primary guard is ``direction == "inbound"`` on the
 webhook payload. Secondary is a recent outbound message_id set (LRU 1000)
-filtered on every inbound. Tertiary is an event_type allowlist
-(only ``message.received``).
+filtered on every inbound (populated from agent sends and ``message.sent``
+``provider_id``). Tertiary is human-handoff after dashboard / phone-app
+outbound (``message.sent`` with ``source`` dashboard or app). Quaternary
+is an event_type allowlist (``message.received`` + ``message.sent``).
 
 **Idempotency.** Kirimdev retries deliveries on timeout. We dedupe via
 ``X-Kirim-Event-Id`` with a 1h TTL in-memory cache, pruned on each request.
@@ -58,6 +60,7 @@ try:
         normalize_template_list_status,
         parse_chat_id,
         parse_meta_inbound,
+        parse_message_sent,
         verify_kirim_signature,
     )
 except ImportError:  # pragma: no cover — pytest imports adapter as top-level
@@ -67,9 +70,10 @@ except ImportError:  # pragma: no cover — pytest imports adapter as top-level
         extract_button_reply,
         format_e164,
         make_chat_id,
-        parse_chat_id,
         normalize_template_list_status,
+        parse_chat_id,
         parse_meta_inbound,
+        parse_message_sent,
         verify_kirim_signature,
     )
 
@@ -137,8 +141,17 @@ DENIED_BLACKLIST_MAX_SIZE = 5000
 # Extra backoff when Meta/Kirimdev returns 429 on typing (rate limit).
 TYPING_429_BACKOFF_SECONDS = 5.0
 
-ALLOWED_EVENT_TYPES = {"message.received"}
+ALLOWED_EVENT_TYPES = {"message.received", "message.sent"}
 ALLOWED_CHANNELS = {"whatsapp"}
+
+# Inbound types forwarded to the agent as text (button/list replies included).
+INBOUND_TEXT_ALIASES = frozenset({"text", "interactive", "button"})
+INBOUND_VOICE_TYPES = frozenset({"audio", "voice"})
+
+# After a human sends from dashboard or phone-app echo, pause the agent.
+DEFAULT_HUMAN_HANDOFF_SECONDS = 900
+HUMAN_HANDOFF_MAX_SIZE = 5000
+VOICE_TRANSCRIBE_TIMEOUT = 45.0
 
 MAX_BODY_BYTES = 100 * 1024  # 100KB
 PHONE_RE = re.compile(r"^\+?\d{8,15}$")
@@ -329,6 +342,23 @@ def _is_permanent_kirimdev_error(body_text: str) -> bool:
     if m and int(m.group(1)) in PERMANENT_META_ERROR_CODES:
         return True
     return False
+
+
+def _is_inbound_text_type(message_type: str) -> bool:
+    return (message_type or "text").lower() in INBOUND_TEXT_ALIASES
+
+
+def _extract_kirim_media(
+    data: Dict[str, Any],
+) -> Tuple[Optional[str], Optional[str]]:
+    kirim = data.get("kirim")
+    if not isinstance(kirim, dict):
+        return None, None
+    media_url = kirim.get("media_url")
+    media_status = kirim.get("media_status")
+    url = str(media_url).strip() if media_url else None
+    status = str(media_status).strip().lower() if media_status else None
+    return url or None, status or None
 
 
 def _extract_button_reply(data: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
@@ -718,6 +748,24 @@ class _AdapterImpl:
                 self._idempotency = _IdempotencyCache()
                 self._sent_message_ids: "OrderedDict[str, float]" = OrderedDict()
 
+                try:
+                    handoff_sec = int(
+                        os.getenv("KIRIMDEV_HUMAN_HANDOFF_SECONDS")
+                        or DEFAULT_HUMAN_HANDOFF_SECONDS
+                    )
+                except ValueError:
+                    handoff_sec = DEFAULT_HUMAN_HANDOFF_SECONDS
+                self.human_handoff_seconds = max(0, handoff_sec)
+                self._human_handoff: "OrderedDict[str, float]" = OrderedDict()
+
+                self.voice_transcribe_enabled = (
+                    os.getenv("KIRIMDEV_VOICE_TRANSCRIBE", "").strip().lower()
+                    in ("1", "true", "yes", "on")
+                )
+                self._openai_api_key = (
+                    os.getenv("OPENAI_API_KEY") or extra.get("openai_api_key") or ""
+                ).strip()
+
                 # Typing-indicator throttle. Kirimdev caps at 1 req per
                 # customer per 3s. Base.gateway hits send_typing every ~2s,
                 # so we drop ticks that fall within the window. OrderedDict
@@ -974,6 +1022,12 @@ class _AdapterImpl:
                         status=200,
                     )
 
+                if evt_type == "message.sent":
+                    status, code = await self._handle_message_sent(payload)
+                    if status >= 500:
+                        return web.json_response({"error": code}, status=status)
+                    return web.json_response({"status": code}, status=200)
+
                 inbound_items = parse_meta_inbound(payload)
                 if not inbound_items:
                     return web.json_response(
@@ -987,6 +1041,168 @@ class _AdapterImpl:
                         return web.json_response({"error": code}, status=status)
 
                 return web.json_response({"status": "ok"}, status=200)
+
+            def _set_human_handoff(self, chat_id: str) -> None:
+                if self.human_handoff_seconds <= 0 or not chat_id:
+                    return
+                self._human_handoff[chat_id] = (
+                    time.monotonic() + self.human_handoff_seconds
+                )
+                while len(self._human_handoff) > HUMAN_HANDOFF_MAX_SIZE:
+                    self._human_handoff.popitem(last=False)
+
+            def _is_human_handoff_active(self, chat_id: str) -> bool:
+                until = self._human_handoff.get(chat_id)
+                if until is None:
+                    return False
+                if time.monotonic() >= until:
+                    self._human_handoff.pop(chat_id, None)
+                    return False
+                return True
+
+            async def _handle_message_sent(
+                self, payload: Dict[str, Any]
+            ) -> Tuple[int, str]:
+                item = parse_message_sent(payload)
+                if not item:
+                    return 200, "no_data"
+
+                phone_number_id = str(item.get("phone_number_id") or "")
+                if phone_number_id and not self._is_number_enabled(phone_number_id):
+                    return 200, "number_not_enabled"
+
+                provider_id = str(item.get("provider_id") or "")
+                if provider_id:
+                    self._record_sent_id(provider_id)
+
+                source = (item.get("source") or "").lower()
+                if source in ("dashboard", "app"):
+                    phone = normalize_phone(item.get("customer_phone") or "")
+                    if phone_number_id and phone:
+                        chat_id = make_chat_id(phone_number_id, phone)
+                        self._set_human_handoff(chat_id)
+                        logger.info(
+                            "Kirimdev human handoff: pid=%s phone=%s source=%s %ds",
+                            phone_number_id,
+                            redact_phone(phone),
+                            source,
+                            self.human_handoff_seconds,
+                        )
+                return 200, "ok"
+
+            async def _transcribe_voice(self, media_url: str) -> Optional[str]:
+                if not self._openai_api_key:
+                    return None
+                try:
+                    http = await self._get_http()
+                    if http is None:
+                        return None
+                    audio_resp = await http.get(media_url, timeout=30.0)
+                    if audio_resp.status_code >= 400:
+                        logger.warning(
+                            "Voice download failed: status=%d",
+                            audio_resp.status_code,
+                        )
+                        return None
+                    audio_bytes = audio_resp.content
+                    if not audio_bytes:
+                        return None
+
+                    import httpx as hx
+
+                    headers = {"Authorization": f"Bearer {self._openai_api_key}"}
+                    files = {
+                        "file": ("voice.ogg", audio_bytes, "application/octet-stream")
+                    }
+                    data = {"model": "whisper-1"}
+                    async with hx.AsyncClient(timeout=VOICE_TRANSCRIBE_TIMEOUT) as client:
+                        resp = await client.post(
+                            "https://api.openai.com/v1/audio/transcriptions",
+                            headers=headers,
+                            data=data,
+                            files=files,
+                        )
+                    if resp.status_code >= 400:
+                        logger.warning(
+                            "Voice transcribe failed: status=%d",
+                            resp.status_code,
+                        )
+                        return None
+                    body = resp.json()
+                    text = str(body.get("text") or "").strip()
+                    return text or None
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Voice transcribe error: %s", exc)
+                    return None
+
+            async def _prepare_inbound_agent_payload(
+                self, data: Dict[str, Any]
+            ) -> Tuple[str, Optional[List[str]], Optional[str]]:
+                """Return ``(agent_text, media_urls, user_notice)`` for the agent."""
+                message_type_str = (data.get("message_type") or "text").lower()
+                raw_content = _sanitize_inbound_content(data.get("content") or "")
+                media_url, media_status = _extract_kirim_media(data)
+
+                if _is_inbound_text_type(message_type_str):
+                    if not raw_content:
+                        if message_type_str in ("interactive", "button"):
+                            return (
+                                "",
+                                None,
+                                "Maaf, saya tidak bisa membaca balasan tombol tersebut.",
+                            )
+                        return "", None, None
+                    return raw_content, None, None
+
+                if message_type_str == "image":
+                    if media_url and media_status == "ready":
+                        text = raw_content or "[Gambar dari pelanggan]"
+                        return text, [media_url], None
+                    if raw_content:
+                        suffix = (
+                            "\n[Gambar sedang diproses]"
+                            if media_status == "pending"
+                            else "\n[Gambar belum tersedia]"
+                        )
+                        return f"{raw_content}{suffix}", None, None
+                    return (
+                        "",
+                        None,
+                        "Maaf, saya belum bisa memproses gambar ini. "
+                        "Coba kirim ulang atau tulis pesan teks.",
+                    )
+
+                if message_type_str in INBOUND_VOICE_TYPES:
+                    if not self.voice_transcribe_enabled or not self._openai_api_key:
+                        return (
+                            "",
+                            None,
+                            "Maaf, saat ini saya belum bisa memproses pesan suara. "
+                            "Kirim teks ya.",
+                        )
+                    if not media_url or media_status != "ready":
+                        return (
+                            "",
+                            None,
+                            "Maaf, file suara belum tersedia. "
+                            "Coba kirim ulang atau tulis pesan teks.",
+                        )
+                    transcript = await self._transcribe_voice(media_url)
+                    if transcript:
+                        return transcript, None, None
+                    return (
+                        "",
+                        None,
+                        "Maaf, saya tidak bisa memahami pesan suara tersebut. "
+                        "Coba kirim teks ya.",
+                    )
+
+                return (
+                    "",
+                    None,
+                    "Maaf, saat ini saya hanya bisa memproses pesan teks, "
+                    "tombol, gambar, dan suara.",
+                )
 
             async def _dispatch_inbound(
                 self, data: Dict[str, Any]
@@ -1011,6 +1227,13 @@ class _AdapterImpl:
                 msg_id = wamid
                 if msg_id and msg_id in self._sent_message_ids:
                     return 200, "self_echo"
+
+                if self._is_human_handoff_active(chat_id):
+                    logger.info(
+                        "Kirimdev human handoff active for %s — skipping agent",
+                        redact_phone(phone),
+                    )
+                    return 200, "human_handoff"
 
                 logger.info(
                     "Kirimdev inbound: pid=%s phone=%s type=%s text_len=%d wamid=%s",
@@ -1037,13 +1260,17 @@ class _AdapterImpl:
 
                 if tier == TIER_UNKNOWN:
                     msg_type_lower = (data.get("message_type") or "text").lower()
-                    if msg_type_lower != "text":
+                    if not _is_inbound_text_type(msg_type_lower):
                         logger.info(
                             "Kirimdev unknown sender %s non-text (%s) — dropped",
                             redact_phone(phone),
                             msg_type_lower,
                         )
                         return 200, "unknown_non_text"
+
+                    pending_text = _sanitize_inbound_content(data.get("content") or "")
+                    if not pending_text:
+                        return 200, "unknown_empty"
 
                     if phone in self._denied_blacklist and (
                         time.monotonic() - self._denied_blacklist[phone]
@@ -1054,7 +1281,7 @@ class _AdapterImpl:
                     self._spawn(
                         self._handle_unknown_sender(
                             phone=phone,
-                            text=data.get("content") or "",
+                            text=pending_text,
                             customer_name=data.get("customer_name") or "",
                             message_id=msg_id,
                             channel=self.default_channel,
@@ -1072,23 +1299,20 @@ class _AdapterImpl:
                         self.mark_message_read(msg_id, phone_number_id=phone_number_id)
                     )
 
-                message_type_str = (data.get("message_type") or "text").lower()
-                raw_content = data.get("content") or ""
-                content = _sanitize_inbound_content(raw_content)
-
-                if message_type_str != "text":
+                agent_text, media_urls, user_notice = (
+                    await self._prepare_inbound_agent_payload(data)
+                )
+                if user_notice:
                     logger.info(
-                        "Kirimdev non-text inbound (%s) from %s — not yet supported",
-                        message_type_str,
+                        "Kirimdev inbound notice (%s) for %s",
+                        (data.get("message_type") or "?"),
                         redact_phone(phone),
                     )
-                    self._spawn(
-                        self._safe_send_notice(
-                            chat_id,
-                            "Maaf, saat ini saya hanya bisa memproses pesan teks.",
-                        )
-                    )
-                    return 200, "non_text"
+                    self._spawn(self._safe_send_notice(chat_id, user_notice))
+                    return 200, "unsupported"
+
+                if not agent_text and not media_urls:
+                    return 200, "empty"
 
                 source = self.build_source(
                     chat_id=chat_id,
@@ -1104,16 +1328,36 @@ class _AdapterImpl:
                 self._record_tier_for_chat(chat_id, tier)
 
                 annotated_text = (
-                    f"[tier={tier}] {content}" if content else f"[tier={tier}]"
+                    f"[tier={tier}] {agent_text}" if agent_text else f"[tier={tier}]"
                 )
+                if media_urls and not agent_text:
+                    annotated_text = f"[tier={tier}] [image]"
 
-                event_obj = MessageEvent(
-                    text=annotated_text,
-                    message_type=MessageType.TEXT,
-                    source=source,
-                    message_id=msg_id or None,
-                    raw_message=enriched,
-                )
+                msg_type_enum = MessageType.TEXT
+                if media_urls:
+                    image_type = getattr(MessageType, "IMAGE", None)
+                    if image_type is not None:
+                        msg_type_enum = image_type
+                    else:
+                        annotated_text = (
+                            f"{annotated_text} {media_urls[0]}".strip()
+                        )
+
+                event_kwargs: Dict[str, Any] = {
+                    "text": annotated_text,
+                    "message_type": msg_type_enum,
+                    "source": source,
+                    "message_id": msg_id or None,
+                    "raw_message": enriched,
+                }
+                if media_urls:
+                    event_kwargs["media_files"] = media_urls
+
+                try:
+                    event_obj = MessageEvent(**event_kwargs)
+                except TypeError:
+                    event_kwargs.pop("media_files", None)
+                    event_obj = MessageEvent(**event_kwargs)
 
                 try:
                     from . import tools as _kctools
@@ -2153,7 +2397,7 @@ def interactive_setup() -> None:
     _prompt("KIRIMDEV_ALLOWED_USERS", "Allowed customer phones (comma, no plus)")
     print(
         "Done. Create a webhook subscription via Kirimdev API/dashboard pointing to "
-        "<public-url>/webhook with event 'message.received'."
+        "<public-url>/webhook with events message.received and message.sent."
     )
 
 

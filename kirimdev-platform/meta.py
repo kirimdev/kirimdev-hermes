@@ -104,6 +104,14 @@ def _message_text(msg: Dict[str, Any]) -> Tuple[str, str]:
     if mtype == "button":
         btn = msg.get("button") or {}
         return "button", str(btn.get("text") or btn.get("payload") or "")
+    if mtype == "image":
+        img = msg.get("image") or {}
+        return "image", str(img.get("caption") or "")
+    if mtype in ("audio", "voice"):
+        return mtype, ""
+    if mtype == "video":
+        vid = msg.get("video") or {}
+        return "video", str(vid.get("caption") or "")
     return mtype, ""
 
 
@@ -150,12 +158,15 @@ def parse_meta_inbound(body: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     Each item:
       phone_number_id, customer_phone, wamid, message_type, content,
-      customer_name, raw_message
+      customer_name, raw_message, kirim (optional enrichment block)
     """
     if not isinstance(body, dict):
         return []
     if body.get("object") != "whatsapp_business_account":
         return []
+
+    kirim_block = body.get("kirim")
+    kirim_ctx = kirim_block if isinstance(kirim_block, dict) else None
 
     out: List[Dict[str, Any]] = []
     for entry in body.get("entry") or []:
@@ -201,6 +212,36 @@ def parse_meta_inbound(body: Dict[str, Any]) -> List[Dict[str, Any]]:
                         "content": content,
                         "customer_name": names.get(customer_phone, ""),
                         "raw_message": msg,
+                        "kirim": kirim_ctx,
                     }
                 )
     return out
+
+
+def parse_message_sent(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Normalize Kirimdev ``message.sent`` webhook envelope."""
+    if not isinstance(body, dict):
+        return None
+    if body.get("type") != "message.sent":
+        return None
+    data = body.get("data")
+    if not isinstance(data, dict):
+        return None
+    msg = data.get("message") or {}
+    meta_block = data.get("meta") or {}
+    contact = data.get("contact") or {}
+    if not isinstance(msg, dict):
+        return None
+    phone_number_id = str(
+        data.get("session") or meta_block.get("phone_number_id") or ""
+    ).strip()
+    to_raw = msg.get("to") or contact.get("phone_number") or ""
+    customer_phone = re.sub(r"\D", "", str(to_raw))
+    return {
+        "phone_number_id": phone_number_id,
+        "customer_phone": customer_phone,
+        "provider_id": str(msg.get("provider_id") or ""),
+        "source": str(msg.get("source") or ""),
+        "body": msg.get("body"),
+        "message_type": str(msg.get("type") or ""),
+    }

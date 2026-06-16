@@ -296,7 +296,7 @@ curl -s -X POST https://api.kirimdev.com/v1/webhook_subscriptions \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://hermes-webhooks.domain.com/webhook",
-    "events": ["message.received"]
+    "events": ["message.received", "message.sent"]
   }'
 ```
 

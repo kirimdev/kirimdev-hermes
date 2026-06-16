@@ -45,7 +45,10 @@ hermes setup kirimdev
 https://<domain>/webhook
 ```
 
-Event: `message.received`
+Events: `message.received`, `message.sent` (handoff + echo guard)
+
+Optional: `KIRIMDEV_VOICE_TRANSCRIBE=true` + `OPENAI_API_KEY` for inbound voice.
+Human handoff after dashboard/phone-app send: `KIRIMDEV_HUMAN_HANDOFF_SECONDS` (default 900).
 
 ## Health check
 

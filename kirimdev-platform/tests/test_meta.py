@@ -80,6 +80,102 @@ def test_parse_meta_inbound_text():
     assert items[0]["wamid"] == "wamid.abc"
 
 
+def test_parse_meta_inbound_interactive_button_reply():
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "metadata": {"phone_number_id": "999"},
+                            "messages": [
+                                {
+                                    "from": "628111",
+                                    "id": "wamid.btn",
+                                    "type": "interactive",
+                                    "interactive": {
+                                        "type": "button_reply",
+                                        "button_reply": {
+                                            "id": "opt_yes",
+                                            "title": "Ya, lanjut",
+                                        },
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+        ],
+    }
+    items = meta.parse_meta_inbound(payload)
+    assert len(items) == 1
+    assert items[0]["message_type"] == "interactive"
+    assert items[0]["content"] == "Ya, lanjut"
+
+
+def test_parse_meta_inbound_image_with_kirim_enrichment():
+    payload = {
+        "object": "whatsapp_business_account",
+        "kirim": {
+            "media_url": "https://media.kirimdev.com/x.jpg",
+            "media_status": "ready",
+        },
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "metadata": {"phone_number_id": "999"},
+                            "messages": [
+                                {
+                                    "from": "628111",
+                                    "id": "wamid.img",
+                                    "type": "image",
+                                    "image": {"caption": "Bukti transfer"},
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+        ],
+    }
+    items = meta.parse_meta_inbound(payload)
+    assert len(items) == 1
+    assert items[0]["message_type"] == "image"
+    assert items[0]["content"] == "Bukti transfer"
+    assert items[0]["kirim"]["media_url"].endswith("x.jpg")
+    assert items[0]["kirim"]["media_status"] == "ready"
+
+
+def test_parse_message_sent_dashboard():
+    payload = {
+        "type": "message.sent",
+        "data": {
+            "session": "106540352242922",
+            "message": {
+                "provider_id": "wamid.OUT123",
+                "type": "text",
+                "body": "Halo dari dashboard",
+                "to": "+6282297983399",
+                "source": "dashboard",
+            },
+            "contact": {"phone_number": "+6282297983399"},
+            "meta": {"phone_number_id": "106540352242922"},
+        },
+    }
+    item = meta.parse_message_sent(payload)
+    assert item is not None
+    assert item["phone_number_id"] == "106540352242922"
+    assert item["customer_phone"] == "6282297983399"
+    assert item["provider_id"] == "wamid.OUT123"
+    assert item["source"] == "dashboard"
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [

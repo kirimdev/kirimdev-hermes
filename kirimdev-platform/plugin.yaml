@@ -1,7 +1,7 @@
 name: kirimdev-platform
 label: Kirimdev
 kind: platform
-version: 1.0.0
+version: 1.1.0
 description: >
   Kirimdev WhatsApp Cloud API gateway adapter for Hermes Agent.
   Runs an aiohttp webhook server that receives Kirimdev webhook
@@ -103,3 +103,20 @@ optional_env:
     description: "Pending approvals JSON path (default ~/.hermes/kirimdev_pending.json)"
     prompt: Pending file path
     password: false
+  - name: KIRIMDEV_HUMAN_HANDOFF_SECONDS
+    description: >
+      Pause the agent for this many seconds after a human sends from the
+      Kirimdev dashboard or phone-app echo (message.sent source dashboard/app).
+      Default 900. Set 0 to disable.
+    prompt: Human handoff seconds
+    password: false
+  - name: KIRIMDEV_VOICE_TRANSCRIBE
+    description: >
+      When true, inbound voice/audio messages are downloaded from
+      kirim.media_url and transcribed via OpenAI Whisper (requires OPENAI_API_KEY).
+    prompt: Enable voice transcription? (true/false)
+    password: false
+  - name: OPENAI_API_KEY
+    description: OpenAI API key for voice transcription (when KIRIMDEV_VOICE_TRANSCRIBE=true)
+    prompt: OpenAI API key
+    password: true
