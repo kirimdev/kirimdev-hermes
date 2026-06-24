@@ -31,7 +31,7 @@ First public release.
 ### Added
 
 - **Kirimdev platform plugin** for [Hermes Agent](https://hermes-agent.nousresearch.com): aiohttp webhook server, `X-Kirim-Signature` verification, Meta pass-through payload parsing.
-- **Tier authorization** — owner / allowed / granted / unknown with owner approval buttons and JSON-backed grants (`~/.hermes/kirimdev_grants.json`).
+- **Tier authorization** — owner / allowed / unknown (tier `granted` via tombol Approve/Deny di WA belum tersedia; tidak dibalas agent saat ini).
 - **Session key** `{phone_number_id}:{customer_phone}` and `KIRIMDEV_ENABLED_NUMBERS` business-number allowlist.
 - **`kirimdev_*` tools** — send text, buttons, CTA URL, list, image, carousel, template, broadcast helpers, grant management; tools register under the `kirimdev` toolset (`hermes-kirimdev` composite).
 - **`KIRIMDEV_OWNER_FULL_AGENT`** (default `true`) — owners get the full Hermes agent plus all `kirimdev_*` tools; set `false` to limit owners to Kirimdev tools only.

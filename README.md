@@ -93,14 +93,14 @@ Set via `hermes config set NAMA nilai` (disimpan di `~/.hermes/.env`).
 |----------|-----------|
 | `KIRIMDEV_DEFAULT_PHONE_NUMBER_ID` | Default sender untuk cron / CLI (biasanya sama dengan entry di `ENABLED_NUMBERS`) |
 | `KIRIMDEV_PUBLIC_URL` | `https://domain` tanpa `/webhook` |
-| `KIRIMDEV_OWNER_USERS` | Nomor owner (comma-separated) — full access + approve customer baru |
+| `KIRIMDEV_OWNER_USERS` | Nomor owner (comma-separated) — full access |
 
 ### Authorization
 
 | Variable | Default | Deskripsi |
 |----------|---------|-----------|
 | `KIRIMDEV_ALLOWED_USERS` | *(kosong)* | Whitelist customer tier `allowed` |
-| `KIRIMDEV_ALLOW_ALL_USERS` | `false` | Dev only — **tidak** bypass approval tier |
+| `KIRIMDEV_ALLOW_ALL_USERS` | `false` | Dev only — terima inbound dari semua nomor di enabled numbers |
 | `KIRIMDEV_OWNER_FULL_AGENT` | `true` | `false` = owner hanya tools `kirimdev_*`, tanpa terminal/web Hermes |
 
 ### Jaringan & rate limit
@@ -141,6 +141,8 @@ Pause agent saat staff kirim dari dashboard Kirimdev atau echo app HP.
 | `KIRIMDEV_GRANTS_FILE` | `~/.hermes/kirimdev_grants.json` |
 | `KIRIMDEV_PENDING_FILE` | `~/.hermes/kirimdev_pending.json` |
 
+> Catatan: grant/pending file saat ini **tidak aktif** dipakai — fitur Approve/Deny tier `granted` belum tersedia. Lihat [Authorization tier](#authorization-tier).
+
 ### Testing only
 
 | Variable | Deskripsi |
@@ -172,10 +174,9 @@ hermes config set OPENAI_API_KEY sk-...
 |------|--------|-------------------|-------|
 | `owner` | `KIRIMDEV_OWNER_USERS` | ✅ | Full Hermes + `kirimdev_*` |
 | `allowed` | `KIRIMDEV_ALLOWED_USERS` | ✅ | Text + reply (button, list, image, …) |
-| `granted` | Owner tap **Approve** di WA | ✅ (24 jam) | Text only |
-| `unknown` | Lainnya | ❌ pending approval | — |
+| `unknown` | Lainnya | ❌ | — |
 
-Customer baru (`unknown`) → owner dapat WA dengan tombol Approve/Deny.
+> Tier `granted` (approve via tombol di WA) **belum tersedia**. Saat ini pesan dari nomor di luar `KIRIMDEV_OWNER_USERS` / `KIRIMDEV_ALLOWED_USERS` tidak dibalas agent.
 
 Testing pertama: masukkan nomor WA kamu ke `KIRIMDEV_OWNER_USERS`, kirim pesan ke nomor bisnis → agent harus balas.
 
